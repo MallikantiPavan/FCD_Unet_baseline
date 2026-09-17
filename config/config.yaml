@@ -1,0 +1,81 @@
+seed: 42
+
+data:
+  cropped_root: /storage/projects/vinkle/ez_compass_imaging/data/cropped_data_pretty
+  train_csv: /storage/projects/vinkle/ez_compass_imaging/data/csvs/train.csv
+  test_csv: /storage/projects/vinkle/ez_compass_imaging/data/csvs/test.csv
+  expected_shape: [159, 190, 160]
+  validate_expected_shape: true
+  affine_tolerance: 0.001
+  strict_affine: false
+
+normalization:
+  T1w_brain:
+    min: 0.7421839237213135
+    max: 1606.20263671875
+  FLAIR_brain:
+    min: 0.9966772212646902
+    max: 551.003799252212
+  clip: true
+
+split:
+  train_ratio: 0.85
+  val_ratio: 0.15
+
+model:
+  name: UNet3D
+  in_channels: 2
+  out_channels: 1
+  base_channels: 16
+  num_levels: 4
+  norm: instance
+  activation: relu
+
+training:
+  epochs: 100
+  batch_size: 1
+  num_workers: 2
+  pin_memory: true
+  amp: true
+  gradient_accumulation_steps: 1
+  early_stopping_patience: 20
+
+optimizer:
+  name: AdamW
+  lr: 0.0001
+  weight_decay: 0.00001
+
+scheduler:
+  name: ReduceLROnPlateau
+  mode: max
+  factor: 0.5
+  patience: 5
+  min_lr: 0.00000001
+
+loss:
+  dice_weight: 1
+  bce_weight: 1
+  smooth: 0.000001
+
+metrics:
+  threshold: 0.5
+
+checkpoint:
+  root_dir: checkpoint
+  monitor: val_dice
+  mode: max
+  save_best_only: true
+
+augmentation:
+  enabled: false
+  flip_prob: 0.5
+  rotate_prob: 0.2
+  max_rotate_degrees: 10
+  intensity_prob: 0.2
+  intensity_scale: 0.1
+  intensity_shift: 0.1
+
+output:
+  predictions_root: predictions
+  save_probability_maps: true
+  visualization_root: visualizations
