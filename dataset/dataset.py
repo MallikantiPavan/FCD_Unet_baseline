@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import warnings
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -52,8 +51,6 @@ class FCD3DDataset(Dataset):
         self.transforms = transforms
         self.expected_shape = tuple(config["data"].get("expected_shape", []))
         self.validate_expected_shape = bool(config["data"].get("validate_expected_shape", True))
-        self.affine_tolerance = float(config["data"].get("affine_tolerance", 1e-3))
-        self.strict_affine = bool(config["data"].get("strict_affine", False))
         self.clip = bool(config["normalization"].get("clip", True))
         self.stats = {"subjects_with_roi": 0, "subjects_without_roi": 0, "positive_roi_voxels": 0}
         if len(self.dataframe) == 0:
@@ -85,12 +82,6 @@ class FCD3DDataset(Dataset):
             raise ValueError(f"{participant_id}: T1 shape {t1.shape} != FLAIR shape {flair.shape}")
         if self.validate_expected_shape and t1.shape != self.expected_shape:
             raise ValueError(f"{participant_id}: expected shape {self.expected_shape}, got {t1.shape}")
-        affine_delta = np.max(np.abs(t1_img.affine - flair_img.affine))
-        if affine_delta > self.affine_tolerance:
-            message = f"{participant_id}: T1/FLAIR affine difference {affine_delta:.6g} exceeds tolerance"
-            if self.strict_affine:
-                raise ValueError(message)
-            warnings.warn(message)
         if roi_path.is_file():
             roi, roi_img = self._load(roi_path)
             if roi.shape != flair.shape:
@@ -98,12 +89,6 @@ class FCD3DDataset(Dataset):
             unique_roi = np.unique(roi)
             if not np.isin(unique_roi, (0, 1)).all():
                 raise ValueError(f"{participant_id}: ROI contains unsupported values {unique_roi[:20].tolist()}; expected strictly 0/1")
-            roi_affine_delta = np.max(np.abs(flair_img.affine - roi_img.affine))
-            if roi_affine_delta > self.affine_tolerance:
-                message = f"{participant_id}: FLAIR/ROI affine difference {roi_affine_delta:.6g} exceeds tolerance"
-                if self.strict_affine:
-                    raise ValueError(message)
-                warnings.warn(message)
             self.stats["subjects_with_roi"] += 1
         else:
             roi = np.zeros(flair.shape, dtype=np.uint8)
@@ -115,7 +100,11 @@ class FCD3DDataset(Dataset):
             _normalize(t1, self.config["normalization"]["T1w_brain"], self.clip),
             _normalize(flair, self.config["normalization"]["FLAIR_brain"], self.clip),
         ], axis=0).astype(np.float32)
-        sample = {"image": image, "mask": mask[None, ...], "participant_id": participant_id}
+        sample = {
+            "image": image,
+            "mask": torch.as_tensor(mask, dtype=torch.float32).unsqueeze(0),
+            "participant_id": participant_id,
+        }
         if self.transforms is not None:
             sample = self.transforms(sample)
         sample["image"] = torch.as_tensor(sample["image"], dtype=torch.float32)

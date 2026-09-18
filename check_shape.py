@@ -29,7 +29,7 @@ def summarize_shapes(data_dir: str | Path, pattern: str) -> tuple[Counter, int, 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Count NIfTI files with a specific volume shape")
-    parser.add_argument("--data-dir", required=True, help="Root directory containing subject folders")
+    parser.add_argument("--data-dir", help="Root directory containing subject folders",default="/storage/projects/vinkle/ez_compass_imaging/data/cropped_data_pretty")
     parser.add_argument("--pattern", default="*.nii.gz", help="Filename pattern, for example T1w_brain.nii.gz")
     parser.add_argument("--show-errors", action="store_true", help="Print files that could not be read")
     args = parser.parse_args()

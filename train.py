@@ -20,7 +20,7 @@ from models import UNet3D
 from utils.checkpoint import next_run_dir, save_checkpoint
 from utils.config import load_config
 from utils.logger import configure_logger
-from utils.losses import CombinedDiceBCELoss
+from utils.losses import bce_loss, dice_loss
 from utils.metrics import segmentation_metrics
 from utils.seed import seed_everything
 
@@ -36,7 +36,7 @@ def _build_model(config: dict[str, Any]) -> UNet3D:
     return UNet3D(**{key: config["model"][key] for key in ("in_channels", "out_channels", "base_channels", "num_levels", "norm", "activation")})
 
 
-def _run_epoch(model, loader, loss_fn, device, threshold, optimizer=None, scaler=None, accumulation_steps=1):
+def _run_epoch(model, loader, config, device, threshold, optimizer=None, scaler=None):
     training = optimizer is not None
     model.train(training)
     totals = {"loss": 0.0, "dice": 0.0, "iou": 0.0, "precision": 0.0, "recall": 0.0}
@@ -46,21 +46,23 @@ def _run_epoch(model, loader, loss_fn, device, threshold, optimizer=None, scaler
         image, mask = batch["image"].to(device, non_blocking=True), batch["mask"].to(device, non_blocking=True)
         with autocast(enabled=scaler is not None):
             logits = model(image)
-            loss = loss_fn(logits, mask) / accumulation_steps
+            loss = (
+                config["loss"]["dice_weight"] * dice_loss(logits, mask, config["loss"]["smooth"])
+                + config["loss"]["bce_weight"] * bce_loss(logits, mask)
+            )
         if training:
             if scaler is not None:
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
-            if (step + 1) % accumulation_steps == 0 or step + 1 == len(loader):
-                if scaler is not None:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
+            if scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
         batch_metrics = segmentation_metrics(logits.detach(), mask, threshold)
-        totals["loss"] += float(loss.item() * accumulation_steps)
+        totals["loss"] += float(loss.item())
         for key in batch_metrics:
             totals[key] += batch_metrics[key]
     return {key: value / len(loader) for key, value in totals.items()}
@@ -101,16 +103,15 @@ def main() -> None:
     device = _device(config)
     model = _build_model(config).to(device)
     logger.info("Model parameters: %d", sum(parameter.numel() for parameter in model.parameters()))
-    loss_fn = CombinedDiceBCELoss(**config["loss"])
     optimizer = AdamW(model.parameters(), lr=config["optimizer"]["lr"], weight_decay=config["optimizer"]["weight_decay"])
     scheduler = ReduceLROnPlateau(optimizer, mode=config["scheduler"]["mode"], factor=config["scheduler"]["factor"], patience=config["scheduler"]["patience"], min_lr=config["scheduler"]["min_lr"])
     amp_enabled = bool(config["training"]["amp"]) and device.type == "cuda"
     scaler = GradScaler(enabled=amp_enabled)
     best_dice, stale_epochs = float("-inf"), 0
     for epoch in range(1, int(config["training"]["epochs"]) + 1):
-        train_metrics = _run_epoch(model, train_loader, loss_fn, device, config["metrics"]["threshold"], optimizer, scaler if amp_enabled else None, config["training"]["gradient_accumulation_steps"])
+        train_metrics = _run_epoch(model, train_loader, config, device, config["metrics"]["threshold"], optimizer, scaler if amp_enabled else None)
         with torch.no_grad():
-            val_metrics = _run_epoch(model, val_loader, loss_fn, device, config["metrics"]["threshold"])
+            val_metrics = _run_epoch(model, val_loader, config, device, config["metrics"]["threshold"])
         scheduler.step(val_metrics["dice"])
         logger.info("Epoch %d/%d | train loss %.5f | val loss %.5f | val dice %.5f | val IoU %.5f | lr %.3g", epoch, config["training"]["epochs"], train_metrics["loss"], val_metrics["loss"], val_metrics["dice"], val_metrics["iou"], optimizer.param_groups[0]["lr"])
         if val_metrics["dice"] > best_dice:

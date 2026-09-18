@@ -36,6 +36,21 @@ def main() -> None:
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device).eval()
     frame = load_subject_dataframe(config["data"]["test_csv"])
+    data_root = Path(config["data"]["cropped_root"])
+    available_subjects = []
+    skipped_subjects = []
+    for participant_id in frame["participant_id"]:
+        subject_dir = data_root / str(participant_id)
+        required_files = (subject_dir / "T1w_brain.nii.gz", subject_dir / "FLAIR_brain.nii.gz")
+        if subject_dir.is_dir() and all(path.is_file() for path in required_files):
+            available_subjects.append(participant_id)
+        else:
+            skipped_subjects.append(str(participant_id))
+    frame = frame[frame["participant_id"].isin(available_subjects)].reset_index(drop=True)
+    print(f"Test subjects in CSV: {len(available_subjects) + len(skipped_subjects)}")
+    print(f"Test subjects available: {len(available_subjects)}")
+    if skipped_subjects:
+        print(f"Skipped missing subjects ({len(skipped_subjects)}): {', '.join(skipped_subjects)}")
     dataset = FCD3DDataset(frame, config, build_eval_transforms())
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=config["training"]["num_workers"])
     output_dir = Path(config["output"]["predictions_root"]) / checkpoint_path.parent.name

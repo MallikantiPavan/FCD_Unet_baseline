@@ -4,10 +4,8 @@ data:
   cropped_root: /storage/projects/vinkle/ez_compass_imaging/data/cropped_data_pretty
   train_csv: /storage/projects/vinkle/ez_compass_imaging/data/csvs/train.csv
   test_csv: /storage/projects/vinkle/ez_compass_imaging/data/csvs/test.csv
-  expected_shape: [159, 190, 160]
+  expected_shape: [160, 192, 160]
   validate_expected_shape: true
-  affine_tolerance: 0.001
-  strict_affine: false
 
 normalization:
   T1w_brain:
@@ -37,8 +35,7 @@ training:
   num_workers: 2
   pin_memory: true
   amp: true
-  gradient_accumulation_steps: 1
-  early_stopping_patience: 20
+  early_stopping_patience: 50
 
 optimizer:
   name: AdamW
@@ -53,7 +50,7 @@ scheduler:
   min_lr: 0.00000001
 
 loss:
-  dice_weight: 1
+  dice_weight: 2
   bce_weight: 1
   smooth: 0.000001
 

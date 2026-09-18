@@ -5,3 +5,6 @@ checkpoint/
 predictions/
 visualizations/
 logs/
+gpu.sh
+predictions/
+jobsgpu.sh
