@@ -68,6 +68,7 @@ class FCD3DDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         participant_id = str(self.dataframe.iloc[index]["participant_id"])
+        group = str(self.dataframe.iloc[index].get("group", "unknown")).strip().lower()
         subject_dir = self.root / participant_id
         if not subject_dir.is_dir():
             raise FileNotFoundError(f"Missing subject directory for {participant_id}: {subject_dir}")
@@ -91,6 +92,8 @@ class FCD3DDataset(Dataset):
                 raise ValueError(f"{participant_id}: ROI contains unsupported values {unique_roi[:20].tolist()}; expected strictly 0/1")
             self.stats["subjects_with_roi"] += 1
         else:
+            if group == "fcd":
+                raise FileNotFoundError(f"{participant_id}: FCD subject is missing required ROI {roi_path}")
             roi = np.zeros(flair.shape, dtype=np.uint8)
             self.stats["subjects_without_roi"] += 1
             LOGGER.warning("%s: ROI missing -> using zero mask", participant_id)
@@ -104,6 +107,7 @@ class FCD3DDataset(Dataset):
             "image": image,
             "mask": torch.as_tensor(mask, dtype=torch.float32).unsqueeze(0),
             "participant_id": participant_id,
+            "group": group,
         }
         if self.transforms is not None:
             sample = self.transforms(sample)

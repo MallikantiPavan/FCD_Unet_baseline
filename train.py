@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ def _run_epoch(model, loader, config, device, threshold, optimizer=None, scaler=
     training = optimizer is not None
     model.train(training)
     totals = {"loss": 0.0, "dice": 0.0, "iou": 0.0, "precision": 0.0, "recall": 0.0}
+    metric_counts = {key: 0 for key in totals}
     if training:
         optimizer.zero_grad(set_to_none=True)
     for step, batch in enumerate(tqdm(loader, leave=False)):
@@ -84,9 +86,12 @@ def _run_epoch(model, loader, config, device, threshold, optimizer=None, scaler=
             optimizer.zero_grad(set_to_none=True)
         batch_metrics = segmentation_metrics(logits.detach(), mask, threshold)
         totals["loss"] += float(loss.item())
+        metric_counts["loss"] += 1
         for key in batch_metrics:
-            totals[key] += batch_metrics[key]
-    return {key: value / len(loader) for key, value in totals.items()}
+            if math.isfinite(batch_metrics[key]):
+                totals[key] += batch_metrics[key]
+                metric_counts[key] += 1
+    return {key: totals[key] / max(metric_counts[key], 1) for key in totals}
 
 
 def main() -> None:

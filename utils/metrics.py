@@ -9,8 +9,20 @@ def segmentation_metrics(logits: torch.Tensor, target: torch.Tensor, threshold: 
     tp = (prediction * target).sum(1)
     fp = (prediction * (1 - target)).sum(1)
     fn = ((1 - prediction) * target).sum(1)
-    dice = ((2 * tp + smooth) / (2 * tp + fp + fn + smooth)).mean()
-    iou = ((tp + smooth) / (tp + fp + fn + smooth)).mean()
-    precision = ((tp + smooth) / (tp + fp + smooth)).mean()
-    recall = ((tp + smooth) / (tp + fn + smooth)).mean()
-    return {"dice": float(dice.item()), "iou": float(iou.item()), "precision": float(precision.item()), "recall": float(recall.item())}
+    target_is_empty = (tp + fn) == 0
+    prediction_is_empty = (tp + fp) == 0
+    dice = (2 * tp + smooth) / (2 * tp + fp + fn + smooth)
+    iou = (tp + smooth) / (tp + fp + fn + smooth)
+    precision = (tp + smooth) / (tp + fp + smooth)
+    recall = (tp + smooth) / (tp + fn + smooth)
+    empty_case_score = prediction_is_empty.float()
+    dice = torch.where(target_is_empty, empty_case_score, dice)
+    iou = torch.where(target_is_empty, empty_case_score, iou)
+    precision = torch.where(target_is_empty, empty_case_score, precision)
+    recall = torch.where(target_is_empty, torch.full_like(recall, float("nan")), recall)
+    return {
+        "dice": float(dice.mean().item()),
+        "iou": float(iou.mean().item()),
+        "precision": float(precision.mean().item()),
+        "recall": float(torch.nanmean(recall).item()),
+    }

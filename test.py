@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 from pathlib import Path
 
 import nibabel as nib
@@ -56,15 +57,28 @@ def main() -> None:
     output_dir = Path(config["output"]["predictions_root"]) / checkpoint_path.parent.name
     output_dir.mkdir(parents=True, exist_ok=True)
     totals = {key: 0.0 for key in ("dice", "iou", "precision", "recall")}
+    metric_counts = {key: 0 for key in totals}
+    group_counts = {"fcd": 0, "hc": 0}
+    hc_false_positive_subjects = 0
+    hc_false_positive_voxels = 0
     logger = logging.getLogger("fcd_unet3d.test")
     for batch in loader:
         image, mask = batch["image"].to(device), batch["mask"].to(device)
         with torch.no_grad():
             logits = model(image)
         metric = segmentation_metrics(logits, mask, config["metrics"]["threshold"])
-        for key in totals:
-            totals[key] += metric[key]
         participant_id = batch["participant_id"][0]
+        group = str(batch["group"][0]).strip().lower()
+        group_counts[group] = group_counts.get(group, 0) + 1
+        if group == "fcd":
+            for key in totals:
+                if math.isfinite(metric[key]):
+                    totals[key] += metric[key]
+                    metric_counts[key] += 1
+        elif group == "hc":
+            predicted_positive = int((torch.sigmoid(logits)[0, 0] >= config["metrics"]["threshold"]).sum().item())
+            hc_false_positive_voxels += predicted_positive
+            hc_false_positive_subjects += int(predicted_positive > 0)
         prediction = (torch.sigmoid(logits)[0, 0] >= config["metrics"]["threshold"]).cpu().numpy().astype(np.uint8)
         subject_dir = Path(config["data"]["cropped_root"]) / participant_id
         reference = nib.load(str(subject_dir / "FLAIR_brain.nii.gz"))
@@ -76,8 +90,13 @@ def main() -> None:
     if len(dataset) == 0:
         raise ValueError("Test dataset is empty")
     print(f"Test subjects: {len(dataset)}")
+    print(f"FCD subjects evaluated: {group_counts.get('fcd', 0)}")
     for key, value in totals.items():
-        print(f"Test {key.capitalize()}: {value / len(dataset):.5f}")
+        if metric_counts[key]:
+            print(f"FCD {key.capitalize()}: {value / metric_counts[key]:.5f}")
+    print(f"Healthy controls evaluated: {group_counts.get('hc', 0)}")
+    print(f"Healthy controls with false-positive prediction: {hc_false_positive_subjects}")
+    print(f"Healthy-control false-positive voxels: {hc_false_positive_voxels}")
     print(f"Predictions: {output_dir}")
 
 
