@@ -6,7 +6,7 @@ A modular, reproducible 3D binary segmentation pipeline for cropped T1-weighted 
 
 Each subject directory under `data.cropped_root` must contain `T1w_brain.nii.gz` and `FLAIR_brain.nii.gz`. `FLAIR_roi.nii.gz` is optional; when absent, the dataset creates `np.zeros(flair.shape, dtype=np.uint8)` and logs the subject. CSV files must contain `participant_id`; clinical columns are ignored.
 
-The default expected shape is `(159, 190, 160)`. Shapes, NaNs/Infs, and affine compatibility are checked. No reorientation, resize, crop, or padding is performed.
+The default expected shape is `(160, 192, 160)`. Shapes, NaNs/Infs, and affine compatibility are checked. No reorientation, resize, crop, or padding is performed.
 
 T1w and FLAIR are independently normalized using the fixed constants in `config/config.yaml`, then optionally clipped to `[0, 1]`. No dataset statistics are calculated.
 

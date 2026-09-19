@@ -20,7 +20,7 @@ from models import UNet3D
 from utils.checkpoint import next_run_dir, save_checkpoint
 from utils.config import load_config
 from utils.logger import configure_logger
-from utils.losses import bce_loss, dice_loss
+from utils.losses import bce_loss, dice_loss,focal_loss
 from utils.metrics import segmentation_metrics
 from utils.seed import seed_everything
 
@@ -46,10 +46,31 @@ def _run_epoch(model, loader, config, device, threshold, optimizer=None, scaler=
         image, mask = batch["image"].to(device, non_blocking=True), batch["mask"].to(device, non_blocking=True)
         with autocast(enabled=scaler is not None):
             logits = model(image)
-            loss = (
-                config["loss"]["dice_weight"] * dice_loss(logits, mask, config["loss"]["smooth"])
-                + config["loss"]["bce_weight"] * bce_loss(logits, mask)
-            )
+            loss_type = config["loss"]["type"]
+
+            if loss_type == "focal_bce":
+                loss = (
+                    config["loss"]["focal_weight"] * focal_loss(
+                        logits,
+                        mask,
+                        alpha=config["loss"]["focal_alpha"],
+                        gamma=config["loss"]["focal_gamma"],
+                    )
+                    + config["loss"]["bce_weight"] * bce_loss(logits, mask)
+                )
+            elif loss_type == "dice_bce":
+                loss = (
+                    config["loss"]["dice_weight"] * dice_loss(
+                        logits,
+                        mask,
+                        smooth=config["loss"]["smooth"],
+                    )
+                    + config["loss"]["bce_weight"] * bce_loss(logits, mask)
+                )
+            else:
+                raise ValueError(f"Unsupported loss type: {loss_type}")
+
+
         if training:
             if scaler is not None:
                 scaler.scale(loss).backward()
@@ -96,6 +117,10 @@ def main() -> None:
         yaml.safe_dump(run_config, handle, sort_keys=False)
     logger.info("Device: %s | Seed: %s", _device(config), config["seed"])
     logger.info("Train subjects: %d | Validation subjects: %d | Test subjects: %d", len(train_frame), len(val_frame), len(test_frame))
+    
+
+    logger.info("Loss type: %s", config["loss"]["type"])
+    
     train_dataset = FCD3DDataset(train_frame, config, build_train_transforms(config))
     val_dataset = FCD3DDataset(val_frame, config, build_eval_transforms())
     train_loader = DataLoader(train_dataset, batch_size=config["training"]["batch_size"], shuffle=True, num_workers=config["training"]["num_workers"], pin_memory=config["training"]["pin_memory"])

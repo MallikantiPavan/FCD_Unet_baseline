@@ -7,4 +7,5 @@ visualizations/
 logs/
 gpu.sh
 predictions/
-jobsgpu.sh
+jobs
+

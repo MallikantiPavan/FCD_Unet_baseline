@@ -4,8 +4,8 @@ import re
 import os
 from pathlib import Path
 
-log_file="/storage/projects/vinkle/ez_compass_imaging/code/pavan_unet/checkpoint/checkpoint_2/train.log"
-output_file="/storage/projects/vinkle/ez_compass_imaging/code/pavan_unet/curves/train_curves.png"
+log_file="/storage/projects/vinkle/ez_compass_imaging/code/pavan_unet/checkpoint/checkpoint_8/train.log"
+output_file="/storage/projects/vinkle/ez_compass_imaging/code/pavan_unet/curves/train_curves_focal_loss.png"
 
 os.makedirs(Path(output_file).parent, exist_ok=True)
 
