@@ -40,6 +40,9 @@ def _run_epoch(model, loader, config, device, threshold, optimizer=None, scaler=
     training = optimizer is not None
     model.train(training)
     totals = {"loss": 0.0, "dice": 0.0, "iou": 0.0, "precision": 0.0, "recall": 0.0}
+    positive_count = 0
+    empty_count = 0
+    empty_false_positive_count = 0
     if training:
         optimizer.zero_grad(set_to_none=True)
     for step, batch in enumerate(tqdm(loader, leave=False)):
@@ -98,9 +101,19 @@ def _run_epoch(model, loader, config, device, threshold, optimizer=None, scaler=
             optimizer.zero_grad(set_to_none=True)
         batch_metrics = segmentation_metrics(logits.detach(), mask, threshold)
         totals["loss"] += float(loss.item())
-        for key in batch_metrics:
-            totals[key] += batch_metrics[key]
-    return {key: value / len(loader) for key, value in totals.items()}
+        positive_count += batch_metrics["positive_count"]
+        empty_count += batch_metrics["empty_count"]
+        empty_false_positive_count += batch_metrics["empty_false_positive_count"]
+        if batch_metrics["positive_count"]:
+            for key in ("dice", "iou", "precision", "recall"):
+                totals[key] += batch_metrics[key] * batch_metrics["positive_count"]
+    if positive_count:
+        for key in ("dice", "iou", "precision", "recall"):
+            totals[key] /= positive_count
+    return {
+        **{key: value / len(loader) if key == "loss" else value for key, value in totals.items()},
+        "healthy_false_positive_rate": empty_false_positive_count / empty_count if empty_count else 0.0,
+    }
 
 
 def main() -> None:
@@ -152,7 +165,7 @@ def main() -> None:
         with torch.no_grad():
             val_metrics = _run_epoch(model, val_loader, config, device, config["metrics"]["threshold"])
         scheduler.step(val_metrics["dice"])
-        logger.info("Epoch %d/%d | train loss %.5f | val loss %.5f | val dice %.5f | val IoU %.5f | lr %.3g", epoch, config["training"]["epochs"], train_metrics["loss"], val_metrics["loss"], val_metrics["dice"], val_metrics["iou"], optimizer.param_groups[0]["lr"])
+        logger.info("Epoch %d/%d | train loss %.5f | val loss %.5f | val FCD dice %.5f | val FCD IoU %.5f | healthy FP rate %.5f | lr %.3g", epoch, config["training"]["epochs"], train_metrics["loss"], val_metrics["loss"], val_metrics["dice"], val_metrics["iou"], val_metrics["healthy_false_positive_rate"], optimizer.param_groups[0]["lr"])
         if val_metrics["dice"] > best_dice:
             best_dice, stale_epochs = val_metrics["dice"], 0
             save_checkpoint(run_dir / "best_point.pth", model, optimizer, scheduler, epoch, best_dice, run_config)

@@ -56,14 +56,21 @@ def main() -> None:
     output_dir = Path(config["output"]["predictions_root"]) / checkpoint_path.parent.name
     output_dir.mkdir(parents=True, exist_ok=True)
     totals = {key: 0.0 for key in ("dice", "iou", "precision", "recall")}
+    positive_count = 0
+    empty_count = 0
+    empty_false_positive_count = 0
     logger = logging.getLogger("fcd_unet3d.test")
     for batch in loader:
         image, mask = batch["image"].to(device), batch["mask"].to(device)
         with torch.no_grad():
             logits = model(image)
         metric = segmentation_metrics(logits, mask, config["metrics"]["threshold"])
-        for key in totals:
-            totals[key] += metric[key]
+        positive_count += metric["positive_count"]
+        empty_count += metric["empty_count"]
+        empty_false_positive_count += metric["empty_false_positive_count"]
+        if metric["positive_count"]:
+            for key in totals:
+                totals[key] += metric[key] * metric["positive_count"]
         participant_id = batch["participant_id"][0]
         prediction = (torch.sigmoid(logits)[0, 0] >= config["metrics"]["threshold"]).cpu().numpy().astype(np.uint8)
         subject_dir = Path(config["data"]["cropped_root"]) / participant_id
@@ -77,7 +84,8 @@ def main() -> None:
         raise ValueError("Test dataset is empty")
     print(f"Test subjects: {len(dataset)}")
     for key, value in totals.items():
-        print(f"Test {key.capitalize()}: {value / len(dataset):.5f}")
+        print(f"Test FCD {key.capitalize()}: {value / positive_count if positive_count else 0.0:.5f}")
+    print(f"Healthy-control false-positive rate: {empty_false_positive_count / empty_count if empty_count else 0.0:.5f}")
     print(f"Predictions: {output_dir}")
 
 
