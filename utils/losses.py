@@ -31,4 +31,13 @@ def focal_loss(
     alpha_factor = target * alpha + (1.0 - target) * (1.0 - alpha)
     return (alpha_factor * focal_factor * binary_cross_entropy).mean()
 
+def focal_dice_loss(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    alpha: float = 0.25,
+    gamma: float = 2.0,
+    smooth: float = 1e-6,
+) -> torch.Tensor:
+    return focal_loss(logits, target, alpha=alpha, gamma=gamma) + dice_loss(logits, target, smooth=smooth)
+
 

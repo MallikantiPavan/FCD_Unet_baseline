@@ -4,36 +4,43 @@ from typing import Any, Mapping
 
 from monai.transforms import (
     Compose,
+    Flipd,
     RandAdjustContrastd,
     RandAffined,
-    RandFlipd,
     EnsureTyped,
 )
 
 
-def build_train_transforms(config: Mapping[str, Any]) -> Compose:
+def build_train_transforms(config: Mapping[str, Any]) -> list[Compose] | Compose:
     aug = config.get("augmentation", {})
     if not aug.get("enabled", True):
         return build_eval_transforms()
-    transforms = [
-        RandFlipd(keys=["image", "mask"], spatial_axis=0, prob=aug.get("flip_prob", 0.5)),
-        RandFlipd(keys=["image", "mask"], spatial_axis=1, prob=aug.get("flip_prob", 0.5)),
-        RandFlipd(keys=["image", "mask"], spatial_axis=2, prob=aug.get("flip_prob", 0.5)),
+
+    keys = ["image", "mask"]
+    original = Compose([EnsureTyped(keys=keys)])
+    flipped = Compose([
+        Flipd(keys=keys, spatial_axis=(0, 1, 2)),
+        EnsureTyped(keys=keys),
+    ])
+    rotated = Compose([
         RandAffined(
             keys=["image", "mask"],
-            prob=aug.get("rotate_prob", 0.2),
+            prob=1.0,
             rotate_range=tuple(float(aug.get("max_rotate_degrees", 10)) * 3.141592653589793 / 180 for _ in range(3)),
             mode=("bilinear", "nearest"),
             padding_mode="border",
         ),
+        EnsureTyped(keys=keys),
+    ])
+    intensity = Compose([
         RandAdjustContrastd(
             keys=["image"],
-            prob=aug.get("intensity_prob", 0.2),
+            prob=1.0,
             gamma=(1.0 - float(aug.get("intensity_scale", 0.1)), 1.0 + float(aug.get("intensity_scale", 0.1))),
         ),
-        EnsureTyped(keys=["image", "mask"]),
-    ]
-    return Compose(transforms)
+        EnsureTyped(keys=keys),
+    ])
+    return [original, flipped, rotated, intensity]
 
 
 def build_eval_transforms() -> Compose:

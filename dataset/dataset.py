@@ -48,7 +48,7 @@ class FCD3DDataset(Dataset):
         self.dataframe = dataframe.reset_index(drop=True)
         self.config = config
         self.root = Path(config["data"]["cropped_root"])
-        self.transforms = transforms
+        self.transforms = transforms if isinstance(transforms, (list, tuple)) else [transforms]
         self.expected_shape = tuple(config["data"].get("expected_shape", []))
         self.validate_expected_shape = bool(config["data"].get("validate_expected_shape", True))
         self.clip = bool(config["normalization"].get("clip", True))
@@ -57,7 +57,7 @@ class FCD3DDataset(Dataset):
             raise ValueError("Dataset is empty")
 
     def __len__(self) -> int:
-        return len(self.dataframe)
+        return len(self.dataframe) * len(self.transforms)
 
     def _load(self, path: Path) -> tuple[np.ndarray, nib.Nifti1Image]:
         image = nib.load(str(path))
@@ -67,7 +67,8 @@ class FCD3DDataset(Dataset):
         return np.asarray(array), image
 
     def __getitem__(self, index: int) -> dict[str, Any]:
-        participant_id = str(self.dataframe.iloc[index]["participant_id"])
+        subject_index, transform_index = divmod(index, len(self.transforms))
+        participant_id = str(self.dataframe.iloc[subject_index]["participant_id"])
         subject_dir = self.root / participant_id
         if not subject_dir.is_dir():
             raise FileNotFoundError(f"Missing subject directory for {participant_id}: {subject_dir}")
@@ -105,8 +106,9 @@ class FCD3DDataset(Dataset):
             "mask": torch.as_tensor(mask, dtype=torch.float32).unsqueeze(0),
             "participant_id": participant_id,
         }
-        if self.transforms is not None:
-            sample = self.transforms(sample)
+        transform = self.transforms[transform_index]
+        if transform is not None:
+            sample = transform(sample)
         sample["image"] = torch.as_tensor(sample["image"], dtype=torch.float32)
         sample["mask"] = (torch.as_tensor(sample["mask"], dtype=torch.float32) > 0.5).float()
         return sample

@@ -67,6 +67,20 @@ def _run_epoch(model, loader, config, device, threshold, optimizer=None, scaler=
                     )
                     + config["loss"]["bce_weight"] * bce_loss(logits, mask)
                 )
+            elif loss_type == "focal_dice":
+                loss = (
+                    config["loss"]["focal_weight"] * focal_loss(
+                        logits,
+                        mask,
+                        alpha=config["loss"]["focal_alpha"],
+                        gamma=config["loss"]["focal_gamma"],
+                    )
+                    + config["loss"]["dice_weight"] * dice_loss(
+                        logits,
+                        mask,
+                        smooth=config["loss"]["smooth"],
+                    )
+                )
             else:
                 raise ValueError(f"Unsupported loss type: {loss_type}")
 
