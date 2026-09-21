@@ -55,10 +55,11 @@ def main() -> None:
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=config["training"]["num_workers"])
     output_dir = Path(config["output"]["predictions_root"]) / checkpoint_path.parent.name
     output_dir.mkdir(parents=True, exist_ok=True)
-    totals = {key: 0.0 for key in ("dice", "iou", "precision", "recall")}
+    totals = {key: 0.0 for key in ("dice_fcd", "iou_fcd", "precision", "recall")}
     positive_count = 0
     empty_count = 0
     empty_false_positive_count = 0
+    # fp_volume_hc_sum = 0.0
     logger = logging.getLogger("fcd_unet3d.test")
     for batch in loader:
         image, mask = batch["image"].to(device), batch["mask"].to(device)
@@ -68,6 +69,7 @@ def main() -> None:
         positive_count += metric["positive_count"]
         empty_count += metric["empty_count"]
         empty_false_positive_count += metric["empty_false_positive_count"]
+        # fp_volume_hc_sum += metric["fp_volume_hc"] * metric["empty_count"]
         if metric["positive_count"]:
             for key in totals:
                 totals[key] += metric[key] * metric["positive_count"]
@@ -79,13 +81,14 @@ def main() -> None:
         if config["output"].get("save_probability_maps", True):
             probability = torch.sigmoid(logits)[0, 0].cpu().numpy().astype(np.float32)
             nib.save(nib.Nifti1Image(probability, reference.affine, reference.header), str(output_dir / f"{participant_id}_prob.nii.gz"))
-        logger.info("%s | dice %.5f | iou %.5f | precision %.5f | recall %.5f", participant_id, metric["dice"], metric["iou"], metric["precision"], metric["recall"])
+        logger.info("%s | dice %.5f | iou %.5f | precision %.5f | recall %.5f", participant_id, metric["dice_fcd"], metric["iou_fcd"], metric["precision"], metric["recall"])
     if len(dataset) == 0:
         raise ValueError("Test dataset is empty")
     print(f"Test subjects: {len(dataset)}")
     for key, value in totals.items():
         print(f"Test FCD {key.capitalize()}: {value / positive_count if positive_count else 0.0:.5f}")
     print(f"Healthy-control false-positive rate: {empty_false_positive_count / empty_count if empty_count else 0.0:.5f}")
+    # print(f"Healthy-control false-positive voxels: {fp_volume_hc_sum / empty_count if empty_count else 0.0:.1f}")
     print(f"Predictions: {output_dir}")
 
 

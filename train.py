@@ -11,7 +11,7 @@ import yaml
 from torch.cuda.amp import GradScaler, autocast
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
 from dataset import FCD3DDataset, load_subject_dataframe, split_dataframe
@@ -36,13 +36,29 @@ def _build_model(config: dict[str, Any]) -> UNet3D:
     return UNet3D(**{key: config["model"][key] for key in ("in_channels", "out_channels", "base_channels", "num_levels", "norm", "activation")})
 
 
+def _balanced_sampler(frame, transforms_per_subject: int) -> WeightedRandomSampler:
+    if "group" not in frame.columns:
+        raise ValueError("Training CSV must contain a group column for balanced FCD/HC sampling")
+    groups = frame["group"].astype(str).str.lower()
+    is_fcd = groups == "fcd"
+    is_hc = groups.isin(("hc", "healthy", "control", "healthy_control"))
+    if not is_fcd.any() or not is_hc.any():
+        raise ValueError(f"Training CSV must contain both FCD and HC groups; found {sorted(groups.unique())}")
+    row_weights = torch.zeros(len(frame), dtype=torch.double)
+    row_weights[torch.as_tensor(is_fcd.to_numpy())] = 0.5 / int(is_fcd.sum())
+    row_weights[torch.as_tensor(is_hc.to_numpy())] = 0.5 / int(is_hc.sum())
+    sample_weights = row_weights.repeat_interleave(transforms_per_subject)
+    return WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
+
+
 def _run_epoch(model, loader, config, device, threshold, optimizer=None, scaler=None):
     training = optimizer is not None
     model.train(training)
-    totals = {"loss": 0.0, "dice": 0.0, "iou": 0.0, "precision": 0.0, "recall": 0.0}
+    totals = {"loss": 0.0, "dice_fcd": 0.0, "iou_fcd": 0.0, "precision": 0.0, "recall": 0.0}
     positive_count = 0
     empty_count = 0
     empty_false_positive_count = 0
+    fp_volume_hc_sum = 0.0
     if training:
         optimizer.zero_grad(set_to_none=True)
     for step, batch in enumerate(tqdm(loader, leave=False)):
@@ -104,15 +120,17 @@ def _run_epoch(model, loader, config, device, threshold, optimizer=None, scaler=
         positive_count += batch_metrics["positive_count"]
         empty_count += batch_metrics["empty_count"]
         empty_false_positive_count += batch_metrics["empty_false_positive_count"]
+        fp_volume_hc_sum += batch_metrics["fp_volume_hc"] * batch_metrics["empty_count"]
         if batch_metrics["positive_count"]:
-            for key in ("dice", "iou", "precision", "recall"):
+            for key in ("dice_fcd", "iou_fcd", "precision", "recall"):
                 totals[key] += batch_metrics[key] * batch_metrics["positive_count"]
     if positive_count:
-        for key in ("dice", "iou", "precision", "recall"):
+        for key in ("dice_fcd", "iou_fcd", "precision", "recall"):
             totals[key] /= positive_count
     return {
         **{key: value / len(loader) if key == "loss" else value for key, value in totals.items()},
         "healthy_false_positive_rate": empty_false_positive_count / empty_count if empty_count else 0.0,
+        "fp_volume_hc": fp_volume_hc_sum / empty_count if empty_count else 0.0,
     }
 
 
@@ -150,7 +168,8 @@ def main() -> None:
     
     train_dataset = FCD3DDataset(train_frame, config, build_train_transforms(config))
     val_dataset = FCD3DDataset(val_frame, config, build_eval_transforms())
-    train_loader = DataLoader(train_dataset, batch_size=config["training"]["batch_size"], shuffle=True, num_workers=config["training"]["num_workers"], pin_memory=config["training"]["pin_memory"])
+    train_sampler = _balanced_sampler(train_frame, len(train_dataset.transforms))
+    train_loader = DataLoader(train_dataset, batch_size=config["training"]["batch_size"], sampler=train_sampler, num_workers=config["training"]["num_workers"], pin_memory=config["training"]["pin_memory"])
     val_loader = DataLoader(val_dataset, batch_size=config["training"]["batch_size"], shuffle=False, num_workers=config["training"]["num_workers"], pin_memory=config["training"]["pin_memory"])
     device = _device(config)
     model = _build_model(config).to(device)
@@ -164,10 +183,10 @@ def main() -> None:
         train_metrics = _run_epoch(model, train_loader, config, device, config["metrics"]["threshold"], optimizer, scaler if amp_enabled else None)
         with torch.no_grad():
             val_metrics = _run_epoch(model, val_loader, config, device, config["metrics"]["threshold"])
-        scheduler.step(val_metrics["dice"])
-        logger.info("Epoch %d/%d | train loss %.5f | val loss %.5f | val FCD dice %.5f | val FCD IoU %.5f | healthy FP rate %.5f | lr %.3g", epoch, config["training"]["epochs"], train_metrics["loss"], val_metrics["loss"], val_metrics["dice"], val_metrics["iou"], val_metrics["healthy_false_positive_rate"], optimizer.param_groups[0]["lr"])
-        if val_metrics["dice"] > best_dice:
-            best_dice, stale_epochs = val_metrics["dice"], 0
+        scheduler.step(val_metrics["dice_fcd"])
+        logger.info("Epoch %d/%d | train loss %.5f | val loss %.5f | val FCD dice %.5f | val FCD IoU %.5f | HC FP rate %.5f | HC FP voxels %.1f | lr %.3g", epoch, config["training"]["epochs"], train_metrics["loss"], val_metrics["loss"], val_metrics["dice_fcd"], val_metrics["iou_fcd"], val_metrics["healthy_false_positive_rate"], val_metrics["fp_volume_hc"], optimizer.param_groups[0]["lr"])
+        if val_metrics["dice_fcd"] > best_dice:
+            best_dice, stale_epochs = val_metrics["dice_fcd"], 0
             save_checkpoint(run_dir / "best_point.pth", model, optimizer, scheduler, epoch, best_dice, run_config)
             logger.info("New best validation Dice %.5f saved to %s", best_dice, run_dir / "best_point.pth")
         else:

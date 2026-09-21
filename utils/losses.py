@@ -3,9 +3,14 @@ from __future__ import annotations
 import torch
 
 
-def dice_loss(logits: torch.Tensor, target: torch.Tensor, smooth: float = 1e-6) -> torch.Tensor:
+def dice_loss(logits: torch.Tensor, target: torch.Tensor, smooth: float = 1.0) -> torch.Tensor:
     probabilities = torch.sigmoid(logits).flatten(1)
     target = target.float().flatten(1)
+    has_lesion = target.sum(dim=1) > 0
+    if not has_lesion.any():
+        return logits.sum() * 0.0
+    probabilities = probabilities[has_lesion]
+    target = target[has_lesion]
     intersection = (probabilities * target).sum(dim=1)
     denominator = probabilities.sum(dim=1) + target.sum(dim=1)
     dice = (2 * intersection + smooth) / (denominator + smooth)
@@ -36,7 +41,7 @@ def focal_dice_loss(
     target: torch.Tensor,
     alpha: float = 0.25,
     gamma: float = 2.0,
-    smooth: float = 1e-6,
+    smooth: float = 1.0,
 ) -> torch.Tensor:
     return focal_loss(logits, target, alpha=alpha, gamma=gamma) + dice_loss(logits, target, smooth=smooth)
 
